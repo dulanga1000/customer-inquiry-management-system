@@ -1,0 +1,20 @@
+{
+  "name": "customer-inquiry-management-system",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:api": "pnpm --filter @cims/api dev",
+    "dev:web": "pnpm --filter @cims/web dev",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.23.0",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@12.23.0"
+}
