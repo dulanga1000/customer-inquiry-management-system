@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  staff
+  admin
+}
+
+enum InquiryStatus {
+  new
+  in_progress
+  resolved
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique @db.Citext
+  name         String
+  passwordHash String   @map("password_hash")
+  role         Role     @default(staff)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  refreshTokens     RefreshToken[]
+  createdInquiries  Inquiry[]       @relation("InquiryCreatedBy")
+  assignedInquiries Inquiry[]       @relation("InquiryAssignedTo")
+  statusChanges     StatusHistory[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  familyId  String    @map("family_id") @db.Uuid
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_refresh_tokens_user")
+  @@index([familyId], map: "idx_refresh_tokens_family")
+  @@map("refresh_tokens")
+}
+
+model Inquiry {
+  id           Int           @id @default(autoincrement())
+  customerName String        @map("customer_name")
+  contact      String
+  subject      String
+  description  String
+  status       InquiryStatus @default(new)
+  createdBy    Int           @map("created_by")
+  assignedTo   Int?          @map("assigned_to")
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  creator       User            @relation("InquiryCreatedBy", fields: [createdBy], references: [id])
+  assignee      User?           @relation("InquiryAssignedTo", fields: [assignedTo], references: [id])
+  statusHistory StatusHistory[]
+
+  @@index([status], map: "idx_inquiries_status")
+  @@index([createdBy], map: "idx_inquiries_created_by")
+  @@index([assignedTo], map: "idx_inquiries_assigned")
+  @@index([updatedAt(sort: Desc)], map: "idx_inquiries_updated")
+  @@map("inquiries")
+}
+
+model StatusHistory {
+  id         Int           @id @default(autoincrement())
+  inquiryId  Int           @map("inquiry_id")
+  fromStatus InquiryStatus @map("from_status")
+  toStatus   InquiryStatus @map("to_status")
+  changedBy  Int           @map("changed_by")
+  changedAt  DateTime      @default(now()) @map("changed_at") @db.Timestamptz
+
+  inquiry Inquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  changer User    @relation(fields: [changedBy], references: [id])
+
+  @@index([inquiryId], map: "idx_history_inquiry")
+  @@map("status_history")
+}

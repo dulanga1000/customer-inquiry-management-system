@@ -1,12 +1,12 @@
 import type { Server } from "node:http";
 import { createApp } from "./app.js";
 import { loadEnv } from "./config/env.js";
-import { createPool } from "./db/pool.js";
+import { createPrismaContext } from "./lib/prisma.js";
 
 const env = loadEnv();
-const pool = createPool(env.DATABASE_URL);
+const { prisma, disconnect } = createPrismaContext(env.DATABASE_URL);
 const app = createApp({
-  pool,
+  prisma,
   corsOrigin: env.CORS_ORIGIN,
   logLevel: env.LOG_LEVEL,
 });
@@ -26,7 +26,7 @@ async function shutdown(exitCode: number): Promise<void> {
   await new Promise<void>((resolve) => {
     server.close(() => resolve());
   });
-  await pool.end();
+  await disconnect();
   process.exit(exitCode);
 }
 

@@ -76,8 +76,8 @@ Modern evergreen browsers; Node.js 20 LTS; PostgreSQL 15+ (local via Docker Comp
 | Styling & UI | Tailwind CSS + `shadcn/ui` + Sonner | Accessible Radix primitives styled with Tailwind; fast, consistent UI |
 | Backend | Node.js 20 + Express + TypeScript | Assessment requirement, typed contracts |
 | Validation | Zod (in `packages/shared`) | Single source of truth for schemas and inferred TypeScript types |
-| DB access | `pg` with parameterized queries | No string-built SQL, transparent and easy to explain |
-| Migrations | Plain numbered SQL files | Forward-only, reviewable, zero ORM magic |
+| DB access | Prisma ORM (v7.10.1) with `@prisma/adapter-pg` | Type-safe, parameterized queries strictly encapsulated inside `*.repository.ts` |
+| Migrations | Prisma Migrate (`apps/api/prisma/migrations`) | Forward-only, versioned SQL migrations managed by Prisma CLI |
 | Auth | `bcrypt` (cost 12) + 15-min Access JWT + rotating Refresh Token (SHA-256 hashed in Postgres) in `HttpOnly` cookies | Backend-enforced auth with reuse detection and server-side revocation |
 | Security middleware | `helmet`, `cors` (allow-list), `express-rate-limit`, `cookie-parser` | OWASP hardening |
 | Logging | `pino` + `pino-http` | Structured JSON logs with per-request `requestId` |
@@ -97,7 +97,7 @@ Express API
    3. validate(schema)   (body, params, query via Zod)
    4. Controller         (HTTP only: parse input, call service, send response)
    5. Service            (business rules: access, transitions, duplicates, token rotation)
-   6. Repository         (parameterized SQL only)
+   6. Repository         (Prisma ORM + prisma.$transaction only)
    v
 PostgreSQL (users, refresh_tokens, inquiries, status_history)
    ^
@@ -111,7 +111,7 @@ PostgreSQL (users, refresh_tokens, inquiries, status_history)
 | Route | Maps URL and method to a controller, attaches middleware | Contain logic |
 | Controller | Reads the request, calls the service, sends the response | Contain SQL, business rules, or ad-hoc error responses |
 | Service | Enforces business rules (access, transitions, duplicates, auth) | Know about `req` or `res` |
-| Repository | Executes parameterized SQL only | Decide permissions or business rules |
+| Repository | Executes Prisma ORM queries and `prisma.$transaction` inside `*.repository.ts` | Decide permissions or business rules |
 
 ### 3.4 Architecture Style and Design Patterns
 
@@ -125,13 +125,13 @@ PostgreSQL (users, refresh_tokens, inquiries, status_history)
 | Pattern | Where Used in CIMS |
 | --- | --- |
 | Layered architecture | Route → Middleware → Controller → Service → Repository → PostgreSQL |
-| Repository | All parameterized SQL isolated per entity (`users`, `refresh_tokens`, `inquiries`) |
+| Repository | All database access isolated per entity via Prisma (`users`, `refresh_tokens`, `inquiries`) |
 | Service layer | Business rules separated from HTTP transport |
-| Dependency injection | `new InquiryService(inquiryRepo)` and `createApp({ pool })` so tests can swap dependencies |
+| Dependency injection | `new InquiryService(inquiryRepo)` and `createApp({ prisma })` so tests can swap dependencies |
 | Middleware (Chain of Responsibility) | `requestId`, `requireAuth`, `validate`, `rateLimit`, `errorHandler` |
-| Factory function | `validate(schema)` returns middleware; `createApp({ pool })` builds the Express app |
+| Factory function | `validate(schema)` returns middleware; `createApp({ prisma })` builds the Express app |
 | State machine | Single status transition map (`new -> in_progress -> resolved`, with reopen) |
-| Singleton (module-level) | One shared PostgreSQL `Pool` and one `pino` logger |
+| Singleton (module-level) | One shared `PrismaClient` (via `@prisma/adapter-pg` + `pg.Pool`) and one `pino` logger |
 | DTO / Schema validation | Shared Zod schemas in `packages/shared` define API contracts |
 | Adapter / Wrapper | Frontend `apiClient` hides `fetch`, single-flight 401 refresh retry, and error normalization |
 | Custom hooks | `useAuth`, `useInquiries`, `useInquiry`, `useCreateInquiry`, `useUpdateStatus` |
@@ -174,7 +174,7 @@ PostgreSQL (users, refresh_tokens, inquiries, status_history)
 
 - **FR-LIFE-1:** User opens an inquiry by ID and sees all fields plus chronological status history (who, from, to, when).
 - **FR-LIFE-2:** User changes status among `new`, `in_progress`, and `resolved` following the state machine in Section 5.2.
-- **FR-LIFE-3:** Every successful status change writes a `status_history` row in the same database transaction (`withTransaction`).
+- **FR-LIFE-3:** Every successful status change writes a `status_history` row in the same database transaction (`prisma.$transaction`).
 - **FR-LIFE-4:** Status updates must include the `updatedAt` value the client last saw (optimistic locking, see Section 5.4).
 
 ---
@@ -260,7 +260,7 @@ CREATE INDEX idx_inquiries_updated     ON inquiries (updated_at DESC);
 CREATE INDEX idx_history_inquiry       ON status_history (inquiry_id);
 ```
 
-Notes: `CHECK` constraints act as a second line of defense behind API validation; migrations are numbered, forward-only SQL files in `database/migrations/`; the seed script creates two staff accounts and one admin account using `bcrypt` hashes (no plaintext passwords stored in the database).
+Notes: `CHECK` constraints act as a second line of defense behind API validation; migrations are managed forward-only via Prisma Migrate in `apps/api/prisma/migrations/`; the seed script (`apps/api/prisma/seed.ts`) creates two staff accounts and one admin account using `bcrypt` hashes (no plaintext passwords stored in the database).
 
 ---
 
@@ -291,7 +291,7 @@ Standard error codes: `400 VALIDATION_ERROR` (including non-integer `:id`), `401
 | --- | --- |
 | **A01 Broken Access Control** | Deny by default; `requireAuth` on all private routes; single `findAccessibleInquiry` rule; 404 for forbidden records; `created_by` from session only; integration tests for cross-user IDOR |
 | **A02 Cryptographic Failures** | `bcrypt` cost 12; refresh tokens SHA-256 hashed before DB storage; secrets in env vars only; `HttpOnly`, `Secure`, `SameSite=Lax` cookies; no tokens/passwords in logs or URLs |
-| **A03 Injection** | Parameterized SQL only; Zod validation on body, params, and query; whitelisted filter values; React auto-escaping, no `dangerouslySetInnerHTML` |
+| **A03 Injection** | Prisma Client parameterized queries (no `$queryRawUnsafe` / `$executeRawUnsafe`); Zod validation on body, params, and query; whitelisted filter values; React auto-escaping, no `dangerouslySetInnerHTML` |
 | **A04 Insecure Design** | Threat-modeled required scenarios; explicit state machine; JSON body size limit (10 KB); refresh token family reuse detection |
 | **A05 Security Misconfiguration** | `helmet` headers and CSP; strict CORS allow-list (`credentials: true`); `x-powered-by` disabled; no stack traces in responses; Zod-validated startup env |
 | **A06 Vulnerable Components** | `pnpm audit` in CI; committed lockfile; minimal dependencies |
@@ -310,12 +310,12 @@ Standard error codes: `400 VALIDATION_ERROR` (including non-integer `:id`), `401
 | Category | Requirement |
 | --- | --- |
 | Performance | List and detail respond under 300 ms at expected volume; indexed filters; pagination required |
-| Reliability | Status change + history insert and refresh token rotation run inside SQL transactions; graceful shutdown closes HTTP server and DB pool |
+| Reliability | Status change + history insert and refresh token rotation run inside Prisma transactions (`prisma.$transaction`); graceful shutdown closes HTTP server, Prisma client, and DB pool |
 | Maintainability | TypeScript strict mode; ESLint and Prettier clean; small, named modules |
 | Usability | Every async view has loading, empty, and error states; clear field-level messages; keyboard-accessible forms |
 | Accessibility | Labels bound to inputs, visible focus rings, status conveyed by badge text as well as color |
 | Portability | One command starts Postgres; `.env.example` documents all config; root `pnpm` scripts run everything |
-| Testability | Services and repositories injectable; `createApp({ pool })` allows Supertest without binding a port |
+| Testability | Services and repositories injectable; `createApp({ prisma })` allows Supertest without binding a port |
 
 ---
 
@@ -444,11 +444,14 @@ Managed with `pnpm` workspaces (skipping Nx/Turborepo to keep setup simple).
 cims/
 ├── apps/
 │   ├── api/                           # Express backend
+│   │   ├── prisma/
+│   │   │   ├── schema.prisma          # Prisma 7 schema (PostgreSQL)
+│   │   │   ├── migrations/            # Prisma Migrate SQL files
+│   │   │   └── seed.ts                # Idempotent seed script
 │   │   ├── src/
 │   │   │   ├── config/env.ts          # Zod-validated environment variables
-│   │   │   ├── db/
-│   │   │   │   ├── pool.ts            # Single shared pg Pool
-│   │   │   │   └── transaction.ts     # withTransaction(fn) helper
+│   │   │   ├── lib/
+│   │   │   │   └── prisma.ts          # Singleton PrismaClient (@prisma/adapter-pg)
 │   │   │   ├── middleware/
 │   │   │   │   ├── requireAuth.ts
 │   │   │   │   ├── validate.ts        # validate({ body, params, query })
@@ -479,7 +482,7 @@ cims/
 │   │   │   │   ├── password.ts
 │   │   │   │   └── tokens.ts
 │   │   │   ├── types/express.d.ts
-│   │   │   ├── app.ts                 # createApp({ pool })
+│   │   │   ├── app.ts                 # createApp({ prisma })
 │   │   │   └── server.ts              # Listener + graceful shutdown
 │   │   ├── tests/
 │   │   │   ├── helpers/
@@ -553,9 +556,6 @@ cims/
 │       │   └── index.ts
 │       ├── package.json
 │       └── tsconfig.json
-├── database/
-│   ├── migrations/                    # 001_init.sql, 002_refresh_tokens.sql
-│   └── seeds/seed-users.ts
 ├── docs/SRS.md
 ├── .github/workflows/ci.yml
 ├── docker-compose.yml
@@ -564,7 +564,7 @@ cims/
 ├── .prettierrc
 ├── tsconfig.base.json
 ├── pnpm-workspace.yaml
-├── package.json                       # Root scripts: dev, lint, test, migrate, seed
+├── package.json                       # Root scripts: dev, lint, test, db:migrate, db:seed, db:generate
 ├── DECISIONS.md
 └── README.md
 ```
@@ -574,9 +574,9 @@ cims/
 1. Dependencies point inward: Route → Controller → Service → Repository (never skip a layer).
 2. Feature folders over type folders on both sides.
 3. `components/ui` holds only generic, inquiry-agnostic pieces.
-4. `app.ts` exports `createApp({ pool })` and `server.ts` binds the port.
+4. `app.ts` exports `createApp({ prisma })` and `server.ts` binds the port.
 5. One-way workspace imports: `apps/*` may import `packages/shared`; `shared` imports nothing from `apps/*`; `api` and `web` never import each other.
-6. Root scripts orchestrate everything: `pnpm dev`, `pnpm test`, `pnpm lint`, `pnpm migrate`, `pnpm seed`.
+6. Root scripts orchestrate everything: `pnpm dev`, `pnpm test`, `pnpm lint`, `pnpm db:migrate`, `pnpm db:seed`, `pnpm db:generate`.
 
 ---
 
@@ -598,10 +598,11 @@ cims/
 ### Local Setup Flow
 
 ```bash
-docker compose up -d
+docker compose up -d db
 pnpm install
-pnpm migrate
-pnpm seed
+pnpm db:generate
+pnpm db:migrate
+pnpm db:seed
 pnpm dev
 pnpm test
 ```

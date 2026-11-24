@@ -4,6 +4,7 @@ node_modules/
 
 # Build outputs
 dist/
+dist-seed/
 build/
 .next/
 out/
@@ -37,5 +38,12 @@ next-env.d.ts
 Thumbs.db
 *.pem
 
-# Local agent instructions
+# Generated Prisma client
+apps/api/src/generated/
+
+# Local agent instructions & tool directories
 /AGENTS.md
+.agents/
+.claude/
+.windsurf/
+skills-lock.json
