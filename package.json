@@ -6,8 +6,15 @@
   "scripts": {
     "dev:api": "pnpm --filter @cims/api dev",
     "dev:web": "pnpm --filter @cims/web dev",
+    "build": "pnpm --filter @cims/shared build && pnpm --filter @cims/api build && pnpm --filter @cims/web build",
+    "migrate": "pnpm --filter @cims/api migrate",
+    "seed": "pnpm --filter @cims/api seed",
+    "typecheck": "pnpm --filter @cims/shared typecheck && pnpm --filter @cims/api typecheck && pnpm --filter @cims/web exec tsc --noEmit",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r lint",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down",
+    "docker:reset": "docker compose down -v"
   },
   "devEngines": {
     "packageManager": {

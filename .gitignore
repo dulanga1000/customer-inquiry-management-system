@@ -36,3 +36,6 @@ next-env.d.ts
 .DS_Store
 Thumbs.db
 *.pem
+
+# Local agent instructions
+/AGENTS.md
