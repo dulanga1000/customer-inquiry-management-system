@@ -135,4 +135,4 @@ pnpm docker:reset  # Stop containers and remove volumes
 | `pnpm docker:down` | Stop Docker Compose containers |
 | `pnpm docker:reset` | Stop Docker Compose containers and wipe database volume |
 
-For detailed requirements and API specifications, see [docs/SRS.md](docs/SRS.md).
+For architectural decisions, trade-offs, and testing notes, see [DECISIONS.md](DECISIONS.md).
