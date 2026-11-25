@@ -1,18 +1,26 @@
 import type { Server } from "node:http";
 import { createApp } from "./app.js";
 import { loadEnv } from "./config/env.js";
-import { createPool } from "./db/pool.js";
+import { createPrismaContext } from "./lib/prisma.js";
+import { createLogger } from "./utils/logger.js";
 
 const env = loadEnv();
-const pool = createPool(env.DATABASE_URL);
+const logger = createLogger(env.LOG_LEVEL);
+const { prisma, disconnect } = createPrismaContext(env.DATABASE_URL);
+
 const app = createApp({
-  pool,
+  prisma,
   corsOrigin: env.CORS_ORIGIN,
+  jwtAccessSecret: env.JWT_ACCESS_SECRET,
+  accessTokenTtl: env.ACCESS_TOKEN_TTL,
+  refreshTokenTtlDays: env.REFRESH_TOKEN_TTL_DAYS,
+  cookieSecure: env.COOKIE_SECURE,
   logLevel: env.LOG_LEVEL,
+  logger,
 });
 
 const server: Server = app.listen(env.PORT, () => {
-  process.stdout.write(`CIMS API listening on port ${env.PORT}\n`);
+  logger.info({ port: env.PORT }, "CIMS API listening");
 });
 
 let shuttingDown = false;
@@ -26,7 +34,7 @@ async function shutdown(exitCode: number): Promise<void> {
   await new Promise<void>((resolve) => {
     server.close(() => resolve());
   });
-  await pool.end();
+  await disconnect();
   process.exit(exitCode);
 }
 
@@ -39,11 +47,11 @@ process.on("SIGTERM", () => {
 });
 
 process.on("unhandledRejection", (reason) => {
-  process.stderr.write(`Unhandled rejection: ${String(reason)}\n`);
+  logger.fatal({ err: reason }, "Unhandled promise rejection");
   void shutdown(1);
 });
 
 process.on("uncaughtException", (error) => {
-  process.stderr.write(`Uncaught exception: ${error.stack ?? error.message}\n`);
+  logger.fatal({ err: error }, "Uncaught exception");
   void shutdown(1);
 });

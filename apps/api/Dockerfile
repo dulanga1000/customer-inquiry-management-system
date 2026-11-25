@@ -10,7 +10,7 @@ RUN pnpm --version
 FROM base AS fetch
 RUN pnpm fetch --store-dir /pnpm/store
 
-# 2. Install workspace dependencies for @cims/api and @cims/shared, then compile TypeScript
+# 2. Install workspace dependencies, generate Prisma Client, and compile TypeScript
 FROM base AS builder
 COPY --from=fetch /pnpm/store /pnpm/store
 COPY packages/shared/package.json ./packages/shared/package.json
@@ -21,7 +21,10 @@ RUN pnpm install --frozen-lockfile --prefer-offline --store-dir /pnpm/store --fi
 COPY packages/shared ./packages/shared
 COPY apps/api ./apps/api
 
-RUN pnpm --filter @cims/shared build && pnpm --filter @cims/api build
+RUN pnpm --filter @cims/shared build \
+  && pnpm --filter @cims/api exec npx prisma generate \
+  && pnpm --filter @cims/api exec tsc \
+  && pnpm --filter @cims/api exec tsc -p tsconfig.seed.json
 
 # 3. Install pruned production-only dependencies for @cims/api and @cims/shared
 FROM base AS prod-deps
@@ -43,11 +46,13 @@ COPY --from=prod-deps --chown=node:node /app/packages/shared/node_modules ./pack
 COPY --from=builder --chown=node:node /app/packages/shared/dist ./packages/shared/dist
 COPY --from=prod-deps --chown=node:node /app/apps/api/package.json ./apps/api/package.json
 COPY --from=prod-deps --chown=node:node /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=builder --chown=node:node /app/apps/api/prisma7.config.ts ./apps/api/prisma7.config.ts
+COPY --from=builder --chown=node:node /app/apps/api/prisma ./apps/api/prisma
 COPY --from=builder --chown=node:node /app/apps/api/dist ./apps/api/dist
-COPY --chown=node:node database/migrations ./database/migrations
+COPY --from=builder --chown=node:node /app/apps/api/dist-seed ./apps/api/dist-seed
 
 USER node
 WORKDIR /app/apps/api
 EXPOSE 4000
 
-CMD ["sh", "-c", "node dist/db/migrate.js && node dist/db/seed.js && node dist/server.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist-seed/prisma/seed.js && node dist/server.js"]

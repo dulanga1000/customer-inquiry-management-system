@@ -5,13 +5,20 @@
 # Build outputs
 **/.next
 **/dist
+**/dist-seed
 **/build
 **/out
 **/*.tsbuildinfo
+apps/api/src/generated
 
 # Version control & local docs
 .git
 .gitignore
+AGENTS.md
+.agents
+.claude
+.windsurf
+skills-lock.json
 
 # Environment & secrets
 .env
