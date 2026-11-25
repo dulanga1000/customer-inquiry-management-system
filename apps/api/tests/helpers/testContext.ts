@@ -40,22 +40,38 @@ export function createTestApp(
   });
 }
 
+export interface SeededUser {
+  id: number;
+  email: string;
+  password: string;
+}
+
 export async function resetAndSeedTestUsers(ctx: PrismaContext): Promise<{
-  staffUser: { id: number; email: string; password: string };
-  adminUser: { id: number; email: string; password: string };
+  staffUser: SeededUser;
+  staffTwoUser: SeededUser;
+  adminUser: SeededUser;
 }> {
   await ctx.prisma.$executeRawUnsafe(
     'TRUNCATE TABLE "status_history", "inquiries", "refresh_tokens", "users" RESTART IDENTITY CASCADE',
   );
 
-  const staffPassword = "Password123!";
-  const adminPassword = "Password123!";
+  const defaultPassword = "Password123!";
+  const passwordHash = await hashPassword(defaultPassword);
 
   const staff = await ctx.prisma.user.create({
     data: {
       email: "staff1@cims.local",
       name: "Staff One",
-      passwordHash: await hashPassword(staffPassword),
+      passwordHash,
+      role: "staff",
+    },
+  });
+
+  const staffTwo = await ctx.prisma.user.create({
+    data: {
+      email: "staff2@cims.local",
+      name: "Staff Two",
+      passwordHash,
       role: "staff",
     },
   });
@@ -64,22 +80,32 @@ export async function resetAndSeedTestUsers(ctx: PrismaContext): Promise<{
     data: {
       email: "admin@cims.local",
       name: "Admin User",
-      passwordHash: await hashPassword(adminPassword),
+      passwordHash,
       role: "admin",
     },
   });
 
   return {
-    staffUser: { id: staff.id, email: staff.email, password: staffPassword },
-    adminUser: { id: admin.id, email: admin.email, password: adminPassword },
+    staffUser: { id: staff.id, email: staff.email, password: defaultPassword },
+    staffTwoUser: { id: staffTwo.id, email: staffTwo.email, password: defaultPassword },
+    adminUser: { id: admin.id, email: admin.email, password: defaultPassword },
   };
 }
 
-export function extractCookieValue(setCookies: string[] | string | undefined, name: string): string | undefined {
+export function normalizeSetCookieHeader(
+  setCookies: string[] | string | undefined,
+): string[] {
   if (!setCookies) {
-    return undefined;
+    return [];
   }
-  const list = Array.isArray(setCookies) ? setCookies : [setCookies];
+  return Array.isArray(setCookies) ? setCookies : [setCookies];
+}
+
+export function extractCookieValue(
+  setCookies: string[] | string | undefined,
+  name: string,
+): string | undefined {
+  const list = normalizeSetCookieHeader(setCookies);
   const prefix = `${name}=`;
   for (const cookie of list) {
     if (cookie.startsWith(prefix)) {
@@ -88,4 +114,15 @@ export function extractCookieValue(setCookies: string[] | string | undefined, na
     }
   }
   return undefined;
+}
+
+export function requireCookieValue(
+  setCookies: string[] | string | undefined,
+  name: string,
+): string {
+  const value = extractCookieValue(setCookies, name);
+  if (!value) {
+    throw new Error(`Expected cookie '${name}' in Set-Cookie header`);
+  }
+  return value;
 }

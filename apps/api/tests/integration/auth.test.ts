@@ -6,7 +6,8 @@ import {
   CSRF_HEADER,
   createTestApp,
   createTestPrismaContext,
-  extractCookieValue,
+  normalizeSetCookieHeader,
+  requireCookieValue,
   resetAndSeedTestUsers,
 } from "../helpers/testContext.js";
 
@@ -52,16 +53,16 @@ describe("Auth & Health Integration", () => {
       role: "staff",
     });
 
-    const cookies = res.headers["set-cookie"] as string[] | undefined;
-    const accessCookie = extractCookieValue(cookies, "access_token");
-    const refreshCookie = extractCookieValue(cookies, "refresh_token");
+    const cookies = normalizeSetCookieHeader(res.headers["set-cookie"]);
+    const accessCookie = requireCookieValue(cookies, "access_token");
+    const refreshCookie = requireCookieValue(cookies, "refresh_token");
 
     expect(accessCookie).toBeTruthy();
     expect(refreshCookie).toBeTruthy();
-    expect(cookies?.some((c) => c.includes("HttpOnly") && c.includes("SameSite=Lax"))).toBe(true);
+    expect(cookies.some((c) => c.includes("HttpOnly") && c.includes("SameSite=Lax"))).toBe(true);
 
     const stored = await ctx.prisma.refreshToken.findUnique({
-      where: { tokenHash: hashRefreshToken(refreshCookie!) },
+      where: { tokenHash: hashRefreshToken(refreshCookie) },
     });
     expect(stored).not.toBeNull();
     expect(stored?.userId).toBe(staffUser.id);
@@ -161,7 +162,7 @@ describe("Auth & Health Integration", () => {
       .send({ email: staffUser.email, password: staffUser.password })
       .expect(200);
 
-    const initialRefresh = extractCookieValue(loginRes.headers["set-cookie"], "refresh_token")!;
+    const initialRefresh = requireCookieValue(loginRes.headers["set-cookie"], "refresh_token");
 
     // 1. Valid refresh rotates token
     const refreshRes = await request(app)
@@ -170,7 +171,7 @@ describe("Auth & Health Integration", () => {
       .set("Cookie", [`refresh_token=${initialRefresh}`])
       .expect(200);
 
-    const rotatedRefresh = extractCookieValue(refreshRes.headers["set-cookie"], "refresh_token")!;
+    const rotatedRefresh = requireCookieValue(refreshRes.headers["set-cookie"], "refresh_token");
     expect(rotatedRefresh).toBeTruthy();
     expect(rotatedRefresh).not.toBe(initialRefresh);
 
@@ -215,8 +216,8 @@ describe("Auth & Health Integration", () => {
       .send({ email: staffUser.email, password: staffUser.password })
       .expect(200);
 
-    const accessToken = extractCookieValue(loginRes.headers["set-cookie"], "access_token")!;
-    const refreshToken = extractCookieValue(loginRes.headers["set-cookie"], "refresh_token")!;
+    const accessToken = requireCookieValue(loginRes.headers["set-cookie"], "access_token");
+    const refreshToken = requireCookieValue(loginRes.headers["set-cookie"], "refresh_token");
 
     const logoutRes = await request(app)
       .post("/api/auth/logout")

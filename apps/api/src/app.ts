@@ -16,6 +16,10 @@ import { AuthController } from "./modules/auth/auth.controller.js";
 import { AuthRepository } from "./modules/auth/auth.repository.js";
 import { createAuthRouter } from "./modules/auth/auth.routes.js";
 import { AuthService } from "./modules/auth/auth.service.js";
+import { InquiryController } from "./modules/inquiries/inquiries.controller.js";
+import { InquiryRepository } from "./modules/inquiries/inquiries.repository.js";
+import { createInquiriesRouter } from "./modules/inquiries/inquiries.routes.js";
+import { InquiryService } from "./modules/inquiries/inquiries.service.js";
 import { createLogger } from "./utils/logger.js";
 
 export interface AppDependencies {
@@ -115,13 +119,27 @@ export function createApp({
     refreshTokenTtlMs: refreshTokenTtlDays * 24 * 60 * 60 * 1000,
   });
 
+  const requireAuth = createRequireAuth(jwtAccessSecret);
+
   app.use(
     "/api/auth",
     createAuthRouter({
       controller: authController,
-      requireAuth: createRequireAuth(jwtAccessSecret),
+      requireAuth,
       loginRateLimiter: createLoginRateLimiter(enableRateLimit),
       refreshRateLimiter: createRefreshRateLimiter(enableRateLimit),
+    }),
+  );
+
+  const inquiryRepository = new InquiryRepository(prisma);
+  const inquiryService = new InquiryService(inquiryRepository, logger);
+  const inquiryController = new InquiryController(inquiryService);
+
+  app.use(
+    "/api/inquiries",
+    createInquiriesRouter({
+      controller: inquiryController,
+      requireAuth,
     }),
   );
 
