@@ -64,6 +64,7 @@ This document captures the key architectural choices, trade-offs, testing gaps, 
 
 ## Transparent AI Usage Note
 
-AI assistance was used for scaffolding, test generation, and documentation. Key changes made during review against `docs/SRS.md` and `AGENTS.md`:
-- **Rejected/Aligned:** Rejected initial `UUID` primary keys, `InquiryPriority` field, `/api/v1/*` prefix, public unauthenticated `POST /inquiries`, and `OPEN`/`CLOSED` statuses in favor of `docs/SRS.md` `SERIAL` integer IDs, `/api/*` routes, `requireAuth` + `findAccessibleInquiry` ownership enforcement, and `new`/`in_progress`/`resolved` transitions with `updatedAt` optimistic locking.
-- **Modified:** Updated `AGENTS.md` and `docs/SRS.md` explicitly when adopting Prisma ORM v7.10.1 (`@prisma/adapter-pg`) inside repositories, and fixed Prisma `$transaction` reuse-detection behavior so `family_id` revocation commits instead of rolling back on error.
+AI assistance was used for initial scaffolding, test boilerplate generation, and drafting documentation. Key architectural and product decisions reviewed, changed, or rejected against `docs/SRS.md`:
+
+- **Rejected / Aligned:** Rejected initial suggestions for UUID primary keys, an extra `InquiryPriority` field, `/api/v1/*` route prefixes, public unauthenticated `POST /inquiries`, and `OPEN`/`CLOSED` statuses in favor of `docs/SRS.md` `SERIAL` integer IDs, `/api/*` routes, `requireAuth` + `findAccessibleInquiry` ownership enforcement, and `new`/`in_progress`/`resolved` transitions with `updatedAt` optimistic locking.
+- **Modified:** Updated `docs/SRS.md` when adopting Prisma ORM v7.10.1 (`@prisma/adapter-pg`) inside repositories, fixed Prisma `$transaction` reuse-detection behavior so `family_id` revocation commits instead of rolling back on error, extended duplicate inquiry detection from 5 minutes to a 24-hour global window, and omitted `existingInquiryId` on `409 DUPLICATE_INQUIRY` responses when the requesting staff user lacks ownership access.
