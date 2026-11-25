@@ -20,6 +20,10 @@ import { InquiryController } from "./modules/inquiries/inquiries.controller.js";
 import { InquiryRepository } from "./modules/inquiries/inquiries.repository.js";
 import { createInquiriesRouter } from "./modules/inquiries/inquiries.routes.js";
 import { InquiryService } from "./modules/inquiries/inquiries.service.js";
+import { UserController } from "./modules/users/user.controller.js";
+import { UserRepository } from "./modules/users/user.repository.js";
+import { createUsersRouter } from "./modules/users/user.routes.js";
+import { UserService } from "./modules/users/user.service.js";
 import { createLogger } from "./utils/logger.js";
 
 export interface AppDependencies {
@@ -139,6 +143,18 @@ export function createApp({
     "/api/inquiries",
     createInquiriesRouter({
       controller: inquiryController,
+      requireAuth,
+    }),
+  );
+
+  const userRepository = new UserRepository(prisma);
+  const userService = new UserService(userRepository, logger);
+  const userController = new UserController(userService);
+
+  app.use(
+    "/api/users",
+    createUsersRouter({
+      controller: userController,
       requireAuth,
     }),
   );

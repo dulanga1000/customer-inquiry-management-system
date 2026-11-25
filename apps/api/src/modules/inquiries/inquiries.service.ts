@@ -1,5 +1,6 @@
 import type { Logger } from "pino";
 import type {
+  AssignInquiryInput,
   CreateInquiryInput,
   InquiryDetail,
   InquirySummary,
@@ -13,7 +14,7 @@ import { toInquiryDetail, toInquirySummary } from "./inquiries.mapper.js";
 import type { InquiryRepository } from "./inquiries.repository.js";
 import { getAllowedTransitions, isValidStatusTransition } from "./statusTransitions.js";
 
-const DUPLICATE_WINDOW_MS = 5 * 60 * 1000;
+const DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function normalizeContact(contact: string): string {
   return contact.trim().toLowerCase();
@@ -31,25 +32,37 @@ export class InquiryService {
 
   async createInquiry(input: CreateInquiryInput, user: AuthenticatedUser): Promise<InquiryDetail> {
     const since = new Date(Date.now() - DUPLICATE_WINDOW_MS);
-    const existingId = await this.inquiryRepo.findRecentDuplicateId(
-      user.id,
+    const existing = await this.inquiryRepo.findRecentDuplicate(
       normalizeContact(input.contact),
       normalizeSubject(input.subject),
       since,
     );
 
-    if (existingId !== null) {
+    if (existing !== null) {
+      const canViewExisting =
+        user.role === "admin" ||
+        existing.createdBy === user.id ||
+        existing.assignedTo === user.id;
+
       this.logger.warn(
-        { event: "duplicate_inquiry_rejected", userId: user.id, existingInquiryId: existingId },
+        {
+          event: "duplicate_inquiry_rejected",
+          userId: user.id,
+          existingInquiryId: existing.id,
+          canViewExisting,
+        },
         "Duplicate inquiry rejected",
       );
-      throw new AppError(
-        "DUPLICATE_INQUIRY",
-        409,
-        "A matching inquiry was already submitted within the last 5 minutes",
-        undefined,
-        { existingInquiryId: existingId },
-      );
+
+      const message = canViewExisting
+        ? "A duplicate inquiry was already submitted within the last 24 hours."
+        : "A duplicate inquiry for this customer was already logged by another team member within the last 24 hours.";
+
+      const meta: Record<string, unknown> = canViewExisting
+        ? { canViewExisting: true, existingInquiryId: existing.id }
+        : { canViewExisting: false };
+
+      throw new AppError("DUPLICATE_INQUIRY", 409, message, undefined, meta);
     }
 
     const created = await this.inquiryRepo.createInquiry({
@@ -140,6 +153,54 @@ export class InquiryService {
         "This inquiry was changed elsewhere. Reload to see the latest.",
       );
     }
+
+    return toInquiryDetail(result.inquiry);
+  }
+
+  async assignInquiry(
+    id: number,
+    input: AssignInquiryInput,
+    user: AuthenticatedUser,
+  ): Promise<InquiryDetail> {
+    const inquiry = await this.inquiryRepo.findAccessibleInquiry(id, user);
+    if (!inquiry) {
+      throw new AppError("NOT_FOUND", 404, "Inquiry not found");
+    }
+
+    if (input.assignedTo !== null) {
+      const targetExists = await this.inquiryRepo.userExists(input.assignedTo);
+      if (!targetExists) {
+        throw new AppError("NOT_FOUND", 404, "Assignee user not found");
+      }
+    }
+
+    const result = await this.inquiryRepo.assignWithOptimisticLock({
+      id,
+      expectedUpdatedAt: new Date(input.updatedAt),
+      assignedTo: input.assignedTo,
+    });
+
+    if (result.status === "stale") {
+      this.logger.warn(
+        { event: "stale_inquiry_assign", inquiryId: id, userId: user.id },
+        "Stale inquiry assignment rejected",
+      );
+      throw new AppError(
+        "STALE_DATA",
+        409,
+        "This inquiry was changed elsewhere. Reload to see the latest.",
+      );
+    }
+
+    this.logger.info(
+      {
+        event: "inquiry_assigned",
+        inquiryId: id,
+        actorId: user.id,
+        assignedTo: input.assignedTo,
+      },
+      "Inquiry assignment updated",
+    );
 
     return toInquiryDetail(result.inquiry);
   }

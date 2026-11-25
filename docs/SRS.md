@@ -161,7 +161,7 @@ PostgreSQL (users, refresh_tokens, inquiries, status_history)
 - **FR-CAP-1:** Signed-in user creates an inquiry with customer name, contact, subject, and description.
 - **FR-CAP-2:** New inquiries start as `new`; `created_by` is set from the authenticated user (never taken from the request body).
 - **FR-CAP-3:** Required fields and limits: customer name 2–100 chars; contact must be a valid email or phone number; subject 3–150 chars; description 10–2000 chars. All inputs are trimmed.
-- **FR-CAP-4 (Duplicate policy):** If the same user submits the same normalized contact + subject within 5 minutes, the API returns `409 DUPLICATE_INQUIRY` with `meta: { existingInquiryId }`. The UI disables the submit button while saving and displays a link to the existing record.
+- **FR-CAP-4 (Duplicate policy):** If any staff or admin user submits the same normalized contact + subject within 24 hours (globally across all users), the API returns `409 DUPLICATE_INQUIRY` with `meta: { canViewExisting, existingInquiryId? }` (`existingInquiryId` is included only when `canViewExisting` is `true` per Section 5.1). The UI disables the submit button while saving and displays a link to the existing record only when `canViewExisting` is `true`.
 
 ### 4.3 Inquiry Overview (FR-LIST)
 
@@ -280,8 +280,11 @@ All responses are JSON.
 | POST | `/api/inquiries` | Yes | Create inquiry | 201 | 400, 401, 409 |
 | GET | `/api/inquiries/:id` | Yes | Detail + `allowedTransitions` + history | 200 | 400, 401, 404 |
 | PATCH | `/api/inquiries/:id/status` | Yes | Change status (with `updatedAt`) | 200 | 400, 401, 404, 409, 422 |
+| PATCH | `/api/inquiries/:id/assign` | Admin | Assign or unassign inquiry (with `updatedAt`) | 200 | 400, 401, 403, 404, 409 |
+| GET | `/api/users` | Admin | List all provisioned users | 200 | 401, 403 |
+| POST | `/api/users` | Admin | Provision a staff or admin account | 201 | 400, 401, 403, 409 |
 
-Standard error codes: `400 VALIDATION_ERROR` (including non-integer `:id`), `401 UNAUTHENTICATED`, `404 NOT_FOUND`, `409 STALE_DATA`, `409 DUPLICATE_INQUIRY`, `413 VALIDATION_ERROR` (payload too large), `422 INVALID_TRANSITION`, `429 RATE_LIMITED`, `500 INTERNAL_ERROR`.
+Standard error codes: `400 VALIDATION_ERROR` (including non-integer `:id`), `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `409 EMAIL_TAKEN`, `409 STALE_DATA`, `409 DUPLICATE_INQUIRY`, `413 VALIDATION_ERROR` (payload too large), `422 INVALID_TRANSITION`, `429 RATE_LIMITED`, `500 INTERNAL_ERROR`.
 
 ---
 

@@ -14,8 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CIMS — Customer Inquiry Management System",
-  description: "Track, triage, and resolve customer inquiries reliably.",
+  title: "CaseBox — Customer Inquiry Management",
+  description:
+    "Track, triage, and resolve customer inquiries with a structured workflow and full audit trail.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

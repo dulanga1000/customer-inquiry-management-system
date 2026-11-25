@@ -1,5 +1,13 @@
 import { z } from "zod";
-import type { InquiryStatus } from "../constants/inquiry.js";
+import type { InquiryStatus, UserRole } from "../constants/inquiry.js";
+
+export interface UserSummary {
+  id: number;
+  name: string;
+  email: string;
+  role: UserRole;
+  createdAt: string;
+}
 
 export const healthResponseSchema = z.object({
   status: z.enum(["ok", "degraded"]),
@@ -52,6 +60,7 @@ export interface InquirySummary {
   status: InquiryStatus;
   createdBy: InquiryUserSummary;
   assignedTo: InquiryUserSummary | null;
+  assignedUser: InquiryUserSummary | null;
   createdAt: string;
   updatedAt: string;
 }

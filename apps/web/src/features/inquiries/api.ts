@@ -1,5 +1,6 @@
 import type {
   ApiSuccessResponse,
+  AssignInquiryInput,
   CreateInquiryInput,
   InquiryDetail,
   InquiryStatus,
@@ -59,6 +60,20 @@ export async function updateInquiryStatus(
 ): Promise<InquiryDetail> {
   const response = await apiFetch<ApiSuccessResponse<{ inquiry: InquiryDetail }>>(
     `/api/inquiries/${id}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    },
+  );
+  return response.data.inquiry;
+}
+
+export async function assignInquiry(
+  id: number,
+  input: AssignInquiryInput,
+): Promise<InquiryDetail> {
+  const response = await apiFetch<ApiSuccessResponse<{ inquiry: InquiryDetail }>>(
+    `/api/inquiries/${id}/assign`,
     {
       method: "PATCH",
       body: JSON.stringify(input),

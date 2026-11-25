@@ -59,6 +59,7 @@ function toStatusHistoryEntry(entry: StatusHistoryRow): StatusHistoryEntry {
 }
 
 export function toInquirySummary(row: InquirySummaryRow): InquirySummary {
+  const assigneeSummary = row.assignee ? toUserSummary(row.assignee) : null;
   return {
     id: row.id,
     customerName: row.customerName,
@@ -66,7 +67,8 @@ export function toInquirySummary(row: InquirySummaryRow): InquirySummary {
     subject: row.subject,
     status: row.status,
     createdBy: toUserSummary(row.creator),
-    assignedTo: row.assignee ? toUserSummary(row.assignee) : null,
+    assignedTo: assigneeSummary,
+    assignedUser: assigneeSummary,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

@@ -103,10 +103,11 @@ describe("Inquiries CRUD, Ownership, State Machine & Optimistic Locking", () => 
     });
   });
 
-  it("rejects duplicate contact + subject from the same user within 5 minutes with 409 DUPLICATE_INQUIRY", async () => {
+  it("rejects duplicate contact + subject globally within 24 hours without leaking private IDs and allows after 24 hours", async () => {
     const app = createTestApp(ctx);
     const staffAgent = await loginAs(app, staffUser);
     const staffTwoAgent = await loginAs(app, staffTwoUser);
+    const adminAgent = await loginAs(app, adminUser);
 
     const first = await staffAgent
       .post("/api/inquiries")
@@ -121,7 +122,8 @@ describe("Inquiries CRUD, Ownership, State Machine & Optimistic Locking", () => 
 
     const existingId = first.body.data.inquiry.id as number;
 
-    const duplicate = await staffAgent
+    // Creator (staff1) sees canViewExisting: true + existingInquiryId
+    const duplicateAsOwner = await staffAgent
       .post("/api/inquiries")
       .set(CSRF_HEADER)
       .send({
@@ -131,22 +133,70 @@ describe("Inquiries CRUD, Ownership, State Machine & Optimistic Locking", () => 
         description: "Resubmitting the exact same billing issue after a moment.",
       });
 
-    expect(duplicate.status).toBe(409);
-    expect(duplicate.body.error.code).toBe("DUPLICATE_INQUIRY");
-    expect(duplicate.body.error.meta).toEqual({ existingInquiryId: existingId });
+    expect(duplicateAsOwner.status).toBe(409);
+    expect(duplicateAsOwner.body.error.code).toBe("DUPLICATE_INQUIRY");
+    expect(duplicateAsOwner.body.error.message).toBe(
+      "A duplicate inquiry was already submitted within the last 24 hours.",
+    );
+    expect(duplicateAsOwner.body.error.meta).toEqual({
+      canViewExisting: true,
+      existingInquiryId: existingId,
+    });
 
-    // A different staff user submitting the same contact + subject is allowed
-    const otherUserRes = await staffTwoAgent
+    // Unrelated staff (staff2) receives canViewExisting: false without existingInquiryId leak
+    const duplicateAsOtherStaff = await staffTwoAgent
+      .post("/api/inquiries")
+      .set(CSRF_HEADER)
+      .send({
+        customerName: "Kamal Silva",
+        contact: "  KAMAL@example.com ",
+        subject: "Billing invoice mismatch",
+        description: "Recorded independently by another staff member.",
+      });
+
+    expect(duplicateAsOtherStaff.status).toBe(409);
+    expect(duplicateAsOtherStaff.body.error.code).toBe("DUPLICATE_INQUIRY");
+    expect(duplicateAsOtherStaff.body.error.message).toBe(
+      "A duplicate inquiry for this customer was already logged by another team member within the last 24 hours.",
+    );
+    expect(duplicateAsOtherStaff.body.error.meta).toEqual({ canViewExisting: false });
+    expect(duplicateAsOtherStaff.body.error.meta).not.toHaveProperty("existingInquiryId");
+
+    // Admin sees canViewExisting: true + existingInquiryId
+    const duplicateAsAdmin = await adminAgent
       .post("/api/inquiries")
       .set(CSRF_HEADER)
       .send({
         customerName: "Kamal Silva",
         contact: "kamal@example.com",
         subject: "Billing invoice mismatch",
-        description: "Recorded independently by another staff member.",
+        description: "Admin checking duplicate submission behavior.",
       });
 
-    expect(otherUserRes.status).toBe(201);
+    expect(duplicateAsAdmin.status).toBe(409);
+    expect(duplicateAsAdmin.body.error.code).toBe("DUPLICATE_INQUIRY");
+    expect(duplicateAsAdmin.body.error.meta).toEqual({
+      canViewExisting: true,
+      existingInquiryId: existingId,
+    });
+
+    // Once the existing inquiry is older than 24 hours, submitting the same contact + subject is allowed again
+    await ctx.prisma.inquiry.update({
+      where: { id: existingId },
+      data: { createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000) },
+    });
+
+    const afterWindowRes = await staffTwoAgent
+      .post("/api/inquiries")
+      .set(CSRF_HEADER)
+      .send({
+        customerName: "Kamal Silva",
+        contact: "kamal@example.com",
+        subject: "Billing invoice mismatch",
+        description: "Follow-up request logged after 24 hours elapsed.",
+      });
+
+    expect(afterWindowRes.status).toBe(201);
   });
 
   it("enforces IDOR ownership returning 404 for unauthorized staff and 400 for non-integer IDs", async () => {
@@ -371,5 +421,96 @@ describe("Inquiries CRUD, Ownership, State Machine & Optimistic Locking", () => 
       { from: "in_progress", to: "resolved", by: adminUser.id },
       { from: "resolved", to: "in_progress", by: staffUser.id },
     ]);
+  });
+
+  it("allows admin to assign/unassign inquiries with optimistic locking and blocks staff with 403", async () => {
+    const app = createTestApp(ctx);
+    const staffAgent = await loginAs(app, staffUser);
+    const staffTwoAgent = await loginAs(app, staffTwoUser);
+    const adminAgent = await loginAs(app, adminUser);
+
+    const created = await staffAgent
+      .post("/api/inquiries")
+      .set(CSRF_HEADER)
+      .send({
+        customerName: "Anura Jayasinghe",
+        contact: "anura@example.com",
+        subject: "Grinder calibration service",
+        description: "Requests technician visit for grinder calibration next week.",
+      })
+      .expect(201);
+
+    const inquiryId = created.body.data.inquiry.id as number;
+    const v1UpdatedAt = created.body.data.inquiry.updatedAt as string;
+
+    // 1. Staff cannot assign inquiries (403 FORBIDDEN)
+    const staffAssignRes = await staffAgent
+      .patch(`/api/inquiries/${inquiryId}/assign`)
+      .set(CSRF_HEADER)
+      .send({ assignedTo: staffTwoUser.id, updatedAt: v1UpdatedAt });
+
+    expect(staffAssignRes.status).toBe(403);
+    expect(staffAssignRes.body.error.code).toBe("FORBIDDEN");
+
+    // 2. Non-existent assignee user returns 404 NOT_FOUND
+    const missingUserRes = await adminAgent
+      .patch(`/api/inquiries/${inquiryId}/assign`)
+      .set(CSRF_HEADER)
+      .send({ assignedTo: 999999, updatedAt: v1UpdatedAt });
+
+    expect(missingUserRes.status).toBe(404);
+    expect(missingUserRes.body.error.code).toBe("NOT_FOUND");
+
+    // 3. Admin assigns inquiry to Staff 2
+    const assignedRes = await adminAgent
+      .patch(`/api/inquiries/${inquiryId}/assign`)
+      .set(CSRF_HEADER)
+      .send({ assignedTo: staffTwoUser.id, updatedAt: v1UpdatedAt });
+
+    expect(assignedRes.status).toBe(200);
+    expect(assignedRes.body.data.inquiry.assignedTo).toMatchObject({
+      id: staffTwoUser.id,
+      email: staffTwoUser.email,
+    });
+    expect(assignedRes.body.data.inquiry.assignedUser).toMatchObject({
+      id: staffTwoUser.id,
+      name: "Staff Two",
+      email: staffTwoUser.email,
+    });
+    const v2UpdatedAt = assignedRes.body.data.inquiry.updatedAt as string;
+
+    // 4. Stale updatedAt returns 409 STALE_DATA
+    const staleAssignRes = await adminAgent
+      .patch(`/api/inquiries/${inquiryId}/assign`)
+      .set(CSRF_HEADER)
+      .send({ assignedTo: null, updatedAt: v1UpdatedAt });
+
+    expect(staleAssignRes.status).toBe(409);
+    expect(staleAssignRes.body.error.code).toBe("STALE_DATA");
+
+    // 5. Assigned Staff 2 can now view and update status of the inquiry
+    const readAsAssignee = await staffTwoAgent.get(`/api/inquiries/${inquiryId}`);
+    expect(readAsAssignee.status).toBe(200);
+
+    const statusUpdateByAssignee = await staffTwoAgent
+      .patch(`/api/inquiries/${inquiryId}/status`)
+      .set(CSRF_HEADER)
+      .send({ status: "in_progress", updatedAt: v2UpdatedAt });
+
+    expect(statusUpdateByAssignee.status).toBe(200);
+    expect(statusUpdateByAssignee.body.data.inquiry.status).toBe("in_progress");
+    const v3UpdatedAt = statusUpdateByAssignee.body.data.inquiry.updatedAt as string;
+
+    // 6. Admin unassigns inquiry -> Staff 2 loses access (404 NOT_FOUND)
+    const unassignRes = await adminAgent
+      .patch(`/api/inquiries/${inquiryId}/assign`)
+      .set(CSRF_HEADER)
+      .send({ assignedTo: null, updatedAt: v3UpdatedAt });
+
+    expect(unassignRes.status).toBe(200);
+    expect(unassignRes.body.data.inquiry.assignedTo).toBeNull();
+
+    const readAfterUnassign = await staffTwoAgent.get(`/api/inquiries/${inquiryId}`);
+    expect(readAfterUnassign.status).toBe(404);
   });
 });

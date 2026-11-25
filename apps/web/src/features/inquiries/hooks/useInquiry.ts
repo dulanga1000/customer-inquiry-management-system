@@ -6,5 +6,6 @@ export function useInquiry(id: number) {
     queryKey: ["inquiry", id],
     queryFn: () => fetchInquiry(id),
     enabled: Number.isInteger(id) && id > 0,
+    refetchOnMount: "always",
   });
 }

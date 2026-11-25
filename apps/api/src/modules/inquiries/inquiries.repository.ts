@@ -25,12 +25,26 @@ const INQUIRY_SUMMARY_INCLUDE = {
   assignee: { select: USER_SUMMARY_SELECT },
 } satisfies Prisma.InquiryInclude;
 
-export type UpdateStatusLockResult =
+export type OptimisticUpdateResult =
   | { status: "updated"; inquiry: InquiryDetailRow }
   | { status: "stale" };
 
+export interface RecentDuplicateRecord {
+  id: number;
+  createdBy: number;
+  assignedTo: number | null;
+}
+
 export class InquiryRepository {
   constructor(private readonly prisma: PrismaClient) {}
+
+  async userExists(userId: number): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    return user !== null;
+  }
 
   async findAccessibleInquiry(
     id: number,
@@ -50,21 +64,21 @@ export class InquiryRepository {
     });
   }
 
-  async findRecentDuplicateId(
-    userId: number,
+  async findRecentDuplicate(
     normalizedContact: string,
     normalizedSubject: string,
     since: Date,
-  ): Promise<number | null> {
+  ): Promise<RecentDuplicateRecord | null> {
     const candidates = await this.prisma.inquiry.findMany({
       where: {
-        createdBy: userId,
         createdAt: { gte: since },
       },
       select: {
         id: true,
         contact: true,
         subject: true,
+        createdBy: true,
+        assignedTo: true,
       },
       orderBy: { createdAt: "desc" },
     });
@@ -75,7 +89,15 @@ export class InquiryRepository {
         item.subject.trim().replace(/\s+/g, " ").toLowerCase() === normalizedSubject,
     );
 
-    return match ? match.id : null;
+    if (!match) {
+      return null;
+    }
+
+    return {
+      id: match.id,
+      createdBy: match.createdBy,
+      assignedTo: match.assignedTo,
+    };
   }
 
   async createInquiry(input: {
@@ -152,7 +174,7 @@ export class InquiryRepository {
     fromStatus: InquiryStatus;
     toStatus: InquiryStatus;
     changedBy: number;
-  }): Promise<UpdateStatusLockResult> {
+  }): Promise<OptimisticUpdateResult> {
     return this.prisma.$transaction(async (tx) => {
       // Advance updatedAt by at least 1ms so rapid sequential updates never share a timestamp
       const nextUpdatedAt = new Date(
@@ -182,6 +204,40 @@ export class InquiryRepository {
           changedBy: input.changedBy,
         },
       });
+
+      const inquiry = await tx.inquiry.findUniqueOrThrow({
+        where: { id: input.id },
+        include: INQUIRY_DETAIL_INCLUDE,
+      });
+
+      return { status: "updated", inquiry };
+    });
+  }
+
+  async assignWithOptimisticLock(input: {
+    id: number;
+    expectedUpdatedAt: Date;
+    assignedTo: number | null;
+  }): Promise<OptimisticUpdateResult> {
+    return this.prisma.$transaction(async (tx) => {
+      const nextUpdatedAt = new Date(
+        Math.max(Date.now(), input.expectedUpdatedAt.getTime() + 1),
+      );
+
+      const updated = await tx.inquiry.updateMany({
+        where: {
+          id: input.id,
+          updatedAt: input.expectedUpdatedAt,
+        },
+        data: {
+          assignedTo: input.assignedTo,
+          updatedAt: nextUpdatedAt,
+        },
+      });
+
+      if (updated.count === 0) {
+        return { status: "stale" };
+      }
 
       const inquiry = await tx.inquiry.findUniqueOrThrow({
         where: { id: input.id },

@@ -1,7 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { AlertCircleIcon, Loader2Icon, RefreshCwIcon } from "lucide-react";
+import {
+  AlertCircleIcon,
+  ArrowRightIcon,
+  CheckCircle2Icon,
+  Loader2Icon,
+  RefreshCwIcon,
+  RotateCcwIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import type { InquiryDetail, InquiryStatus } from "@cims/shared";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -9,23 +16,44 @@ import { Button } from "@/components/ui/button";
 import { useUpdateStatus } from "@/features/inquiries/hooks/useUpdateStatus";
 import { ApiError } from "@/lib/apiClient";
 import { formatInquiryStatus } from "@/lib/formatters";
+import { cn } from "cn";
 
 interface StatusActionsProps {
   inquiry: InquiryDetail;
   onReload: () => void;
 }
 
-function getActionLabel(fromStatus: InquiryStatus, toStatus: InquiryStatus): string {
+function getActionMeta(fromStatus: InquiryStatus, toStatus: InquiryStatus) {
   if (fromStatus === "resolved" && toStatus === "in_progress") {
-    return "Reopen Inquiry";
+    return {
+      label: "Reopen Inquiry",
+      icon: RotateCcwIcon,
+      variant: "outline" as const,
+      className: "border-zinc-300 bg-white text-zinc-900 hover:bg-zinc-50 hover:text-zinc-950",
+    };
   }
   if (toStatus === "in_progress") {
-    return "Move to In Progress";
+    return {
+      label: "Move to In Progress",
+      icon: ArrowRightIcon,
+      variant: "default" as const,
+      className: "",
+    };
   }
   if (toStatus === "resolved") {
-    return "Mark Resolved";
+    return {
+      label: "Mark Resolved",
+      icon: CheckCircle2Icon,
+      variant: "default" as const,
+      className: "bg-teal-600 text-white hover:bg-teal-700",
+    };
   }
-  return `Move to ${formatInquiryStatus(toStatus)}`;
+  return {
+    label: `Move to ${formatInquiryStatus(toStatus)}`,
+    icon: ArrowRightIcon,
+    variant: "outline" as const,
+    className: "border-zinc-300 bg-white text-zinc-900 hover:bg-zinc-50",
+  };
 }
 
 export function StatusActions({ inquiry, onReload }: StatusActionsProps) {
@@ -38,6 +66,10 @@ export function StatusActions({ inquiry, onReload }: StatusActionsProps) {
 
   const activeConflict =
     conflictState && conflictState.forUpdatedAt === inquiry.updatedAt ? conflictState : null;
+
+  const allowedTransitions = Array.isArray(inquiry.allowedTransitions)
+    ? inquiry.allowedTransitions
+    : [];
 
   const handleTransition = async (targetStatus: InquiryStatus) => {
     setConflictState(null);
@@ -82,9 +114,50 @@ export function StatusActions({ inquiry, onReload }: StatusActionsProps) {
   };
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col items-start gap-3 sm:items-end">
+      <div className="flex flex-wrap items-center gap-2">
+        {allowedTransitions.length > 0 ? (
+          allowedTransitions.map((targetStatus) => {
+            const meta = getActionMeta(inquiry.status, targetStatus);
+            const Icon = meta.icon;
+            const isUpdatingThis =
+              updateMutation.isPending && updateMutation.variables?.status === targetStatus;
+
+            return (
+              <Button
+                key={targetStatus}
+                type="button"
+                variant={meta.variant}
+                size="default"
+                className={cn("h-9 px-3.5", meta.className)}
+                disabled={updateMutation.isPending}
+                onClick={() => void handleTransition(targetStatus)}
+              >
+                {isUpdatingThis ? (
+                  <Loader2Icon className="size-4 animate-spin" />
+                ) : (
+                  <Icon className="size-4" />
+                )}
+                <span>{meta.label}</span>
+              </Button>
+            );
+          })
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50"
+            onClick={onReload}
+          >
+            <RefreshCwIcon className="size-3.5" />
+            Reload status actions
+          </Button>
+        )}
+      </div>
+
       {activeConflict ? (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="w-full max-w-md text-left">
           <AlertCircleIcon />
           <AlertTitle>
             {activeConflict.code === "STALE_DATA"
@@ -110,23 +183,6 @@ export function StatusActions({ inquiry, onReload }: StatusActionsProps) {
           ) : null}
         </Alert>
       ) : null}
-
-      <div className="flex flex-wrap items-center gap-2">
-        {inquiry.allowedTransitions.map((targetStatus) => (
-          <Button
-            key={targetStatus}
-            type="button"
-            variant={targetStatus === "resolved" ? "default" : "outline"}
-            disabled={updateMutation.isPending}
-            onClick={() => void handleTransition(targetStatus)}
-          >
-            {updateMutation.isPending && updateMutation.variables?.status === targetStatus ? (
-              <Loader2Icon className="animate-spin" />
-            ) : null}
-            {getActionLabel(inquiry.status, targetStatus)}
-          </Button>
-        ))}
-      </div>
     </div>
   );
 }

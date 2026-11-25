@@ -75,3 +75,10 @@ export const updateInquiryStatusSchema = z.object({
 });
 
 export type UpdateInquiryStatusInput = z.infer<typeof updateInquiryStatusSchema>;
+
+export const assignInquirySchema = z.object({
+  assignedTo: z.number().int().positive("Assignee user ID must be a positive integer").nullable(),
+  updatedAt: z.string().datetime({ message: "Valid ISO timestamp is required" }),
+});
+
+export type AssignInquiryInput = z.infer<typeof assignInquirySchema>;

@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import type {
+  AssignInquiryInput,
   CreateInquiryInput,
   ListInquiriesQuery,
   UpdateInquiryStatusInput,
@@ -44,6 +45,16 @@ export class InquiryController {
     const id = Number(req.params["id"]);
     const input = req.body as UpdateInquiryStatusInput;
     const inquiry = await this.inquiryService.updateInquiryStatus(id, input, req.user);
+    res.status(200).json({ data: { inquiry } });
+  };
+
+  assign = async (req: Request, res: Response): Promise<void> => {
+    if (!req.user) {
+      throw new AppError("UNAUTHENTICATED", 401, "Authentication required");
+    }
+    const id = Number(req.params["id"]);
+    const input = req.body as AssignInquiryInput;
+    const inquiry = await this.inquiryService.assignInquiry(id, input, req.user);
     res.status(200).json({ data: { inquiry } });
   };
 }

@@ -4,10 +4,11 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertCircleIcon, ArrowLeftIcon, Loader2Icon } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { AlertCircleIcon, ArrowLeftIcon, CheckCircle2Icon, Loader2Icon } from "lucide-react";
+import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { createInquirySchema, type CreateInquiryInput } from "@cims/shared";
+import { StatusBadge } from "@/components/common/StatusBadge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -22,15 +23,26 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useCreateInquiry } from "@/features/inquiries/hooks/useCreateInquiry";
 import { ApiError } from "@/lib/apiClient";
+import { cn } from "cn";
+
+const INTAKE_GUIDELINES = [
+  "Confirm customer email or phone number before saving.",
+  "Use a concise subject line summarizing the core issue.",
+  "Include order numbers, dates, or context needed for handoff.",
+] as const;
 
 export function InquiryForm() {
   const router = useRouter();
   const createMutation = useCreateInquiry();
-  const [duplicateId, setDuplicateId] = React.useState<number | null>(null);
+  const [duplicateState, setDuplicateState] = React.useState<{
+    canViewExisting: boolean;
+    existingInquiryId: number | null;
+  } | null>(null);
   const [formError, setFormError] = React.useState<string | null>(null);
 
   const {
     register,
+    control,
     handleSubmit,
     setError,
     setFocus,
@@ -45,8 +57,11 @@ export function InquiryForm() {
     },
   });
 
+  const descriptionValue = useWatch({ control, name: "description" });
+  const descriptionLength = descriptionValue?.length ?? 0;
+
   const onSubmit = async (values: CreateInquiryInput) => {
-    setDuplicateId(null);
+    setDuplicateState(null);
     setFormError(null);
 
     try {
@@ -56,9 +71,19 @@ export function InquiryForm() {
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.code === "DUPLICATE_INQUIRY") {
+          const canViewExisting = error.meta?.["canViewExisting"] === true;
           const existingId = error.meta?.["existingInquiryId"];
-          setDuplicateId(typeof existingId === "number" ? existingId : null);
-          setFormError(error.message);
+          const validId = canViewExisting && typeof existingId === "number" ? existingId : null;
+
+          setDuplicateState({
+            canViewExisting: validId !== null,
+            existingInquiryId: validId,
+          });
+          setFormError(
+            validId !== null
+              ? "A duplicate inquiry was already submitted within the last 24 hours."
+              : "A duplicate inquiry for this customer was already logged by another team member within the last 24 hours.",
+          );
           return;
         }
 
@@ -85,121 +110,166 @@ export function InquiryForm() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl space-y-4">
-      <div>
-        <Link href="/inquiries" className={buttonVariants({ variant: "ghost", size: "sm" })}>
-          <ArrowLeftIcon className="size-4" />
+    <div className="space-y-6">
+      <div className="flex items-center gap-2 text-sm text-zinc-500">
+        <Link
+          href="/inquiries"
+          className={cn(
+            buttonVariants({ variant: "outline", size: "sm" }),
+            "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 hover:text-zinc-950",
+          )}
+        >
+          <ArrowLeftIcon className="size-3.5" />
           Back to inquiries
         </Link>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-xl">Create Customer Inquiry</CardTitle>
-          <CardDescription>
-            Record a new customer request. Inquiries start with status New.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
-            {formError ? (
-              <Alert variant="destructive">
-                <AlertCircleIcon />
-                <AlertTitle>
-                  {duplicateId !== null ? "Duplicate inquiry detected" : "Could not save inquiry"}
-                </AlertTitle>
-                <AlertDescription>
-                  <p>{formError}</p>
-                  {duplicateId !== null ? (
-                    <p className="mt-1">
-                      <Link href={`/inquiries/${duplicateId}`} className="font-medium underline">
-                        View existing inquiry #{duplicateId}
-                      </Link>
+      <div className="grid gap-6 lg:grid-cols-12">
+        <Card className="border border-zinc-200 bg-white ring-0 lg:col-span-8">
+          <CardHeader className="border-b border-zinc-100">
+            <CardTitle className="text-xl font-semibold tracking-tight text-zinc-950">
+              Create Customer Inquiry
+            </CardTitle>
+            <CardDescription className="text-zinc-600">
+              Record a new customer request. Inquiries start in the New queue for triage.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="pt-5">
+            <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-5">
+              {formError ? (
+                <Alert variant="destructive">
+                  <AlertCircleIcon />
+                  <AlertTitle>
+                    {duplicateState !== null ? "Duplicate inquiry detected" : "Could not save inquiry"}
+                  </AlertTitle>
+                  <AlertDescription>
+                    <p>{formError}</p>
+                    {duplicateState?.canViewExisting && duplicateState.existingInquiryId !== null ? (
+                      <p className="mt-1">
+                        <Link
+                          href={`/inquiries/${duplicateState.existingInquiryId}`}
+                          className="font-medium underline"
+                        >
+                          View existing inquiry #{duplicateState.existingInquiryId}
+                        </Link>
+                      </p>
+                    ) : null}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="inquiry-customer-name">Customer Name</Label>
+                  <Input
+                    id="inquiry-customer-name"
+                    className="h-10 bg-white"
+                    placeholder="Nimal Jayawardena"
+                    aria-invalid={Boolean(errors.customerName)}
+                    aria-describedby={errors.customerName ? "customer-name-error" : undefined}
+                    {...register("customerName")}
+                  />
+                  {errors.customerName?.message ? (
+                    <p id="customer-name-error" className="text-xs text-destructive">
+                      {errors.customerName.message}
                     </p>
                   ) : null}
-                </AlertDescription>
-              </Alert>
-            ) : null}
+                </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="inquiry-contact">Contact (Email or Phone)</Label>
+                  <Input
+                    id="inquiry-contact"
+                    className="h-10 bg-white"
+                    placeholder="nimal@example.com or +94 77 123 4567"
+                    aria-invalid={Boolean(errors.contact)}
+                    aria-describedby={errors.contact ? "contact-error" : undefined}
+                    {...register("contact")}
+                  />
+                  {errors.contact?.message ? (
+                    <p id="contact-error" className="text-xs text-destructive">
+                      {errors.contact.message}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+
               <div className="space-y-1.5">
-                <Label htmlFor="inquiry-customer-name">Customer Name</Label>
+                <Label htmlFor="inquiry-subject">Subject</Label>
                 <Input
-                  id="inquiry-customer-name"
-                  placeholder="Nimal Jayawardena"
-                  aria-invalid={Boolean(errors.customerName)}
-                  aria-describedby={errors.customerName ? "customer-name-error" : undefined}
-                  {...register("customerName")}
+                  id="inquiry-subject"
+                  className="h-10 bg-white"
+                  placeholder="Order delivery delay"
+                  aria-invalid={Boolean(errors.subject)}
+                  aria-describedby={errors.subject ? "subject-error" : undefined}
+                  {...register("subject")}
                 />
-                {errors.customerName?.message ? (
-                  <p id="customer-name-error" className="text-xs text-destructive">
-                    {errors.customerName.message}
+                {errors.subject?.message ? (
+                  <p id="subject-error" className="text-xs text-destructive">
+                    {errors.subject.message}
                   </p>
                 ) : null}
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="inquiry-contact">Contact (Email or Phone)</Label>
-                <Input
-                  id="inquiry-contact"
-                  placeholder="nimal@example.com or +94 77 123 4567"
-                  aria-invalid={Boolean(errors.contact)}
-                  aria-describedby={errors.contact ? "contact-error" : undefined}
-                  {...register("contact")}
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="inquiry-description">Description</Label>
+                  <span className="font-mono text-[11px] text-zinc-400 tabular-nums">
+                    {descriptionLength} / 2000
+                  </span>
+                </div>
+                <Textarea
+                  id="inquiry-description"
+                  rows={6}
+                  className="bg-white"
+                  placeholder="Provide full details of the customer request..."
+                  aria-invalid={Boolean(errors.description)}
+                  aria-describedby={errors.description ? "description-error" : undefined}
+                  {...register("description")}
                 />
-                {errors.contact?.message ? (
-                  <p id="contact-error" className="text-xs text-destructive">
-                    {errors.contact.message}
+                {errors.description?.message ? (
+                  <p id="description-error" className="text-xs text-destructive">
+                    {errors.description.message}
                   </p>
                 ) : null}
               </div>
-            </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="inquiry-subject">Subject</Label>
-              <Input
-                id="inquiry-subject"
-                placeholder="Order delivery delay"
-                aria-invalid={Boolean(errors.subject)}
-                aria-describedby={errors.subject ? "subject-error" : undefined}
-                {...register("subject")}
-              />
-              {errors.subject?.message ? (
-                <p id="subject-error" className="text-xs text-destructive">
-                  {errors.subject.message}
-                </p>
-              ) : null}
-            </div>
+              <div className="flex justify-end gap-2 border-t border-zinc-100 pt-4">
+                <Link href="/inquiries" className={buttonVariants({ variant: "outline" })}>
+                  Cancel
+                </Link>
+                <Button type="submit" disabled={createMutation.isPending}>
+                  {createMutation.isPending ? <Loader2Icon className="animate-spin" /> : null}
+                  {createMutation.isPending ? "Creating..." : "Create Inquiry"}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="inquiry-description">Description</Label>
-              <Textarea
-                id="inquiry-description"
-                rows={5}
-                placeholder="Provide full details of the customer request..."
-                aria-invalid={Boolean(errors.description)}
-                aria-describedby={errors.description ? "description-error" : undefined}
-                {...register("description")}
-              />
-              {errors.description?.message ? (
-                <p id="description-error" className="text-xs text-destructive">
-                  {errors.description.message}
-                </p>
-              ) : null}
-            </div>
+        <aside className="space-y-4 lg:col-span-4">
+          <Card className="border border-zinc-200 bg-white ring-0">
+            <CardHeader className="border-b border-zinc-100 pb-4">
+              <CardTitle className="text-sm font-semibold text-zinc-950">Intake Checklist</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-4">
+              <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50/70 px-3 py-2">
+                <span className="text-xs font-medium text-zinc-600">Initial status</span>
+                <StatusBadge status="new" />
+              </div>
 
-            <div className="flex justify-end gap-2 pt-2">
-              <Link href="/inquiries" className={buttonVariants({ variant: "outline" })}>
-                Cancel
-              </Link>
-              <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? <Loader2Icon className="animate-spin" /> : null}
-                {createMutation.isPending ? "Creating..." : "Create Inquiry"}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+              <ul className="space-y-2.5 text-xs leading-relaxed text-zinc-600">
+                {INTAKE_GUIDELINES.map((item) => (
+                  <li key={item} className="flex items-start gap-2">
+                    <CheckCircle2Icon className="mt-0.5 size-3.5 shrink-0 text-teal-600" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        </aside>
+      </div>
     </div>
   );
 }

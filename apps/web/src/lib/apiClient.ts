@@ -37,6 +37,12 @@ export interface ApiFetchOptions extends RequestInit {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
+const NO_REFRESH_AUTH_PATHS = new Set([
+  "/api/auth/login",
+  "/api/auth/refresh",
+  "/api/auth/logout",
+]);
+
 let refreshInFlight: Promise<boolean> | null = null;
 
 function buildUrl(path: string): string {
@@ -121,8 +127,9 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
     );
   }
 
-  const isAuthPath = path.startsWith("/api/auth/");
-  if (response.status === 401 && !skipAuthRefresh && !isAuthPath) {
+  const normalizedPathname = (path.startsWith("/") ? path : `/${path}`).split("?")[0] ?? "";
+  const isNoRefreshAuthPath = NO_REFRESH_AUTH_PATHS.has(normalizedPathname);
+  if (response.status === 401 && !skipAuthRefresh && !isNoRefreshAuthPath) {
     const refreshed = await performRefresh();
     if (refreshed) {
       return apiFetch<T>(path, { ...options, skipAuthRefresh: true });

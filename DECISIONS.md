@@ -42,18 +42,23 @@ This document captures the key architectural choices, trade-offs, testing gaps, 
   - **Optimistic Locking:** `PATCH /api/inquiries/:id/status` requires `updatedAt` and executes a conditional `updateMany({ where: { id, updatedAt } })` inside `prisma.$transaction()`. If 0 rows update on an accessible inquiry, the API throws `409 STALE_DATA`, and the UI offers a Reload action.
   - **Atomic Audit History:** Every successful status update writes an immutable `StatusHistory` row inside the same `prisma.$transaction()`.
   - **IDOR Prevention:** Every inquiry read/write passes through `InquiryRepository.findAccessibleInquiry(id, user)` (`admin` sees all; `staff` sees only `createdBy = user.id` or `assignedTo = user.id`). Unauthorized and non-existent IDs both return `404 NOT_FOUND`.
-  - **Duplicate Guard:** Same-user submissions matching normalized `contact` + `subject` within 5 minutes return `409 DUPLICATE_INQUIRY` with `meta.existingInquiryId`.
+  - **Duplicate Guard:** Global submissions across all staff/admin users matching normalized `contact` + `subject` within 24 hours return `409 DUPLICATE_INQUIRY` with `meta: { canViewExisting, existingInquiryId? }`.
 - **Accepted Trade-off:** No real-time WebSocket or SSE push updates; stale views are mitigated by TanStack Query `refetchOnWindowFocus: true` and optimistic locking on write.
 
 ---
 
 ## Known Testing Gaps & Next Improvements
 
-- **Current Coverage:** Backend unit tests (`statusTransitions`) and 18 Supertest integration tests against PostgreSQL (`auth.test.ts`, `errorHandler.test.ts`, `inquiries.test.ts`) pass. TypeScript strict checking and ESLint pass on `apps/web`.
-- **Stated Gaps:**
-  - Frontend component tests (React Testing Library + MSW) are not yet added.
-  - End-to-end browser tests (Playwright), load/concurrency tests, and automated accessibility audits are out of scope for the current phase.
-- **Next Improvements:** Add RTL + MSW tests for `LoginForm`, `InquiryList`, `InquiryForm`, and `InquiryDetail`; add Playwright E2E coverage; add an admin staff-assignment endpoint/UI and scheduled cleanup for expired/revoked refresh tokens.
+- **Current Coverage:**
+  - **Backend (`@cims/api`):** 26 tests passing across 5 files (`tests/unit/statusTransitions.test.ts` [3], `tests/integration/auth.test.ts` [8], `tests/integration/errorHandler.test.ts` [4], `tests/integration/inquiries.test.ts` [7], `tests/integration/users.test.ts` [4]) exercising Supertest HTTP routes, cookie auth & token reuse detection, admin user provisioning, IDOR access control, 24h global duplicate checks, state machine transitions, and `updatedAt` optimistic locking against PostgreSQL.
+  - **Frontend (`@cims/web`):** 4 Vitest + React Testing Library (`jsdom`) interaction tests passing across 2 files (`src/app/(workspace)/inquiries/[id]/inquiry-detail.test.tsx` [2] covering allowed status transitions, live updates, and `409 STALE_DATA` reload recovery; `src/app/(workspace)/inquiries/new/new-inquiry.test.tsx` [2] covering `409 DUPLICATE_INQUIRY` with `canViewExisting` `true` vs `false`).
+  - **Static Verification:** `pnpm -r typecheck` (`@cims/shared`, `@cims/api`, `@cims/web`) and `pnpm --filter @cims/web lint` pass with zero errors.
+- **Remaining Testing Gaps:**
+  - **End-to-End Browser Tests (Playwright):** No full-stack Playwright suite currently drives real browsers across the live Docker Compose stack (`web` + `api` + `db`).
+  - **Real Cross-Browser Cookie & Refresh Behavior:** Frontend tests stub `fetch`, so real browser `HttpOnly` / `SameSite=Lax` / `Secure` cookie handling and multi-tab single-flight `POST /api/auth/refresh` recovery across Safari/Firefox/Chromium are verified only via manual smoke testing and backend Supertest cookie checks.
+  - **Load & Rate-Limit Stress Testing:** Burst concurrency on `POST /api/auth/login` rate limiting, pagination under high row volume, and parallel optimistic-lock contention are not yet benchmarked under load.
+  - **Additional Frontend Component Coverage & Accessibility Audits:** Component interaction tests for `LoginForm`, `InquiryList` filtering/pagination, `AssigneeSelect`, and `TeamManagement`, plus automated axe-core accessibility audits, remain to be added.
+- **Next Improvements:** Add Playwright E2E coverage over the Docker stack, expand RTL coverage for `LoginForm`, `InquiryList`, and `TeamManagement`, add automated axe-core checks, and schedule periodic cleanup for expired/revoked `refresh_tokens` rows.
 
 ---
 
